@@ -9,6 +9,9 @@ const { connectDb } = require("./lib/db");
 const { authRouter } = require("./routes/auth");
 const { meRouter } = require("./routes/me");
 const { scrapeRouter } = require("./routes/scrape");
+const { jobsRouter } = require("./routes/jobs");
+const { runsRouter } = require("./routes/runs");
+const { exportsRouter } = require("./routes/exports");
 
 const app = express();
 
@@ -27,6 +30,9 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRouter);
 app.use("/api/me", meRouter);
 app.use("/api/scrape", scrapeRouter);
+app.use("/api/jobs", jobsRouter);
+app.use("/api/runs", runsRouter);
+app.use("/api/export", exportsRouter);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
@@ -48,8 +54,18 @@ app.use((err, _req, res, _next) => {
 const port = Number(process.env.PORT || 5000);
 
 function listen() {
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`API listening on :${port}`);
+  });
+  server.on("error", (err) => {
+    if (err?.code === "EADDRINUSE") {
+      console.error(
+        `Port ${port} is already in use. Stop the other server or change PORT in .env.`
+      );
+      process.exit(1);
+    }
+    console.error("Server error:", err);
+    process.exit(1);
   });
 }
 
