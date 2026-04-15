@@ -1,25 +1,69 @@
-# WebHarvest (MERN) – Auth Backend (Step 2)
+# WebHarvest
 
-This repo is scaffolded with an Express + MongoDB API and JWT auth to support multi-tenant scraping jobs.
+Monorepo with two apps:
 
-## Setup
+| Folder     | Role                         |
+|-----------|------------------------------|
+| `server/` | Express API (`/api/scrape`, auth, jobs when MongoDB is enabled) |
+| `client/` | Vite + React UI              |
 
-1. Copy env file:
-   - `cp .env.example .env` (or create `.env` manually on Windows)
-2. Set `MONGODB_URI`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`.
-3. Install dependencies:
-   - `npm install`
-4. Run:
-   - `npm run dev`
+## Quick start (full stack)
 
-API runs at `http://localhost:5000`.
+From the **repository root**:
 
-## Endpoints
+```bash
+cd server && npm install && cd ..
+cd client && npm install && cd ..
+```
+
+Copy env for the API:
+
+```bash
+cp server/.env.example server/.env
+```
+
+Edit `server/.env` as needed (`CORS_ORIGIN` should match the client URL, e.g. `http://localhost:3000`).
+
+Then from the **repository root**:
+
+```bash
+npm run dev:server
+```
+
+In another terminal:
+
+```bash
+npm run dev:client
+```
+
+- API: `http://localhost:5000`
+- UI: `http://localhost:3000` (proxies `/api` to the API)
+
+Or run both installs separately:
+
+- **Server only:** `cd server && npm install && npm run dev`
+- **Client only:** `cd client && npm install && npm run dev`
+
+## Root `npm` scripts
+
+| Script            | Action                          |
+|-------------------|---------------------------------|
+| `npm run dev`     | Same as `dev:server`            |
+| `npm run dev:server` | API with nodemon             |
+| `npm run dev:client` | Vite dev server              |
+| `npm start`       | Production API (`node index.js` in `server/`) |
+| `npm run build`   | Build client to `client/dist/` |
+
+## Deploying the server (e.g. cPanel)
+
+Upload only the **`server/`** folder (it has its own `package.json`).
+
+- **Application root:** `server` directory (where `package.json` is).
+- **Startup file:** `index.js`
+- **Environment:** `.env` next to `package.json` inside `server/`.
+
+## API endpoints (when MongoDB is connected)
 
 - `GET /health`
-- `POST /api/auth/register` `{ email, password, name? }`
-- `POST /api/auth/login` `{ email, password }`
-- `POST /api/auth/refresh` (uses `refresh_token` httpOnly cookie)
-- `POST /api/auth/logout`
-- `GET /api/me` (requires `Authorization: Bearer <accessToken>`)
-
+- `POST /api/scrape` — main scrape endpoint
+- `POST /api/auth/*`, `GET /api/me`, `/api/jobs`, `/api/runs`, `/api/export` — require MongoDB

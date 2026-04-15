@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 const WAITING_JSON = {
   status: "waiting",
@@ -9,16 +9,22 @@ const INITIAL_EXTRACT = {
   text: true,
   links: true,
   images: false,
-  meta: true
+  meta: false
 };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
-const ACCESS_TOKEN_KEY = "webharvest_access_token";
+
+/** Strip scheme so the field matches the visible `https://` prefix (avoids double https on paste). */
+function sanitizeUrlInput(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^\/+/, "");
+}
 
 function normalizeUrl(raw) {
-  const t = String(raw || "").trim();
+  const t = sanitizeUrlInput(raw);
   if (!t) return "";
-  if (/^https?:\/\//i.test(t)) return t;
   return "https://" + t.replace(/^\/+/, "");
 }
 
@@ -50,17 +56,6 @@ export default function App() {
   const scrapeAbortRef = useRef(null);
   const scrapeTimerRef = useRef(null);
 
-  const [accessToken, setAccessToken] = useState(() => {
-    try {
-      return localStorage.getItem(ACCESS_TOKEN_KEY) || "";
-    } catch {
-      return "";
-    }
-  });
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [user, setUser] = useState(null);
-
   const [url, setUrl] = useState("");
   const [depth, setDepth] = useState(1);
   const [extract, setExtract] = useState(() => ({ ...INITIAL_EXTRACT }));
@@ -74,12 +69,6 @@ export default function App() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [activeTab, setActiveTab] = useState("summary");
   const [activePageIdx, setActivePageIdx] = useState(0);
-
-  const [jobs, setJobs] = useState([]);
-  const [selectedJobId, setSelectedJobId] = useState("");
-  const [jobName, setJobName] = useState("");
-  const [runs, setRuns] = useState([]);
-  const [selectedRunId, setSelectedRunId] = useState("");
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [options, setOptions] = useState(() => ({
@@ -102,10 +91,6 @@ export default function App() {
     backgroundImages: false,
     documents: false
   }));
-
-  const authHeaders = useMemo(() => {
-    return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
-  }, [accessToken]);
 
   const toggleExtract = useCallback((key) => {
     setExtract((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -178,8 +163,7 @@ export default function App() {
         ...opts,
         headers: {
           "Content-Type": "application/json",
-          ...(opts.headers || {}),
-          ...authHeaders
+          ...(opts.headers || {})
         }
       });
       const raw = await res.text();
@@ -197,203 +181,7 @@ export default function App() {
       }
       return data;
     },
-    [authHeaders]
-  );
-
-  const refreshMe = useCallback(async () => {
-    if (!accessToken) {
-      setUser(null);
-      return;
-    }
-    try {
-      const me = await apiFetch("/api/me", { method: "GET", headers: {} });
-      setUser(me);
-    } catch {
-      setUser(null);
-    }
-  }, [accessToken, apiFetch]);
-
-  const loadJobs = useCallback(async () => {
-    try {
-      const data = await apiFetch("/api/jobs", { method: "GET", headers: {} });
-      setJobs(Array.isArray(data.jobs) ? data.jobs : []);
-    } catch {
-      setJobs([]);
-    }
-  }, [apiFetch]);
-
-  const loadRuns = useCallback(async () => {
-    try {
-      const data = await apiFetch("/api/runs?limit=30", { method: "GET", headers: {} });
-      setRuns(Array.isArray(data.runs) ? data.runs : []);
-    } catch {
-      setRuns([]);
-    }
-  }, [apiFetch]);
-
-  useEffect(() => {
-    refreshMe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken]);
-
-  useEffect(() => {
-    if (!user) return;
-    loadJobs();
-    loadRuns();
-  }, [user, loadJobs, loadRuns]);
-
-  const handleLogin = useCallback(
-    async (e) => {
-      e.preventDefault();
-      try {
-        const data = await apiFetch("/api/auth/login", {
-          method: "POST",
-          body: JSON.stringify({ email: authEmail, password: authPassword }),
-          headers: {}
-        });
-        const token = data.accessToken || "";
-        setAccessToken(token);
-        try {
-          localStorage.setItem(ACCESS_TOKEN_KEY, token);
-        } catch {
-          /* ignore */
-        }
-        setAuthPassword("");
-        setBadgeText("Logged in");
-        setBadgeVariant("ok");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Login failed";
-        setJsonText(JSON.stringify({ error: message }, null, 2));
-        setBadgeText("Auth error");
-        setBadgeVariant(null);
-      }
-    },
-    [apiFetch, authEmail, authPassword]
-  );
-
-  const handleLogout = useCallback(async () => {
-    try {
-      await apiFetch("/api/auth/logout", { method: "POST", body: "{}", headers: {} });
-    } catch {
-      /* ignore */
-    }
-    setAccessToken("");
-    setUser(null);
-    setJobs([]);
-    setRuns([]);
-    setSelectedJobId("");
-    setSelectedRunId("");
-    try {
-      localStorage.removeItem(ACCESS_TOKEN_KEY);
-    } catch {
-      /* ignore */
-    }
-    setBadgeText("Logged out");
-    setBadgeVariant(null);
-  }, [apiFetch]);
-
-  const handleCreateJob = useCallback(
-    async (e) => {
-      e.preventDefault();
-      const normalized = normalizeUrl(url);
-      const keys = extractKeysTrue(extract);
-      if (!jobName.trim()) {
-        setJsonText(JSON.stringify({ error: "Job name is required" }, null, 2));
-        return;
-      }
-      try {
-        const data = await apiFetch("/api/jobs", {
-          method: "POST",
-          body: JSON.stringify({
-            name: jobName.trim(),
-            startUrl: normalized,
-            depth: Number(depth),
-            extract: keys,
-            options,
-            features,
-            isActive: true
-          }),
-          headers: {}
-        });
-        setJobName("");
-        await loadJobs();
-        setSelectedJobId(data.job?._id || data.job?.id || "");
-        setBadgeText("Job saved");
-        setBadgeVariant("ok");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to create job";
-        setJsonText(JSON.stringify({ error: message }, null, 2));
-        setBadgeText("Error");
-        setBadgeVariant(null);
-      }
-    },
-    [apiFetch, url, depth, extract, jobName, loadJobs, options, features]
-  );
-
-  const handleRunJob = useCallback(async () => {
-    if (!selectedJobId) return;
-    setLoading(true);
-    setBadgeText("Running job…");
-    setBadgeVariant("running");
-    try {
-      const data = await apiFetch("/api/runs/run-job", {
-        method: "POST",
-        body: JSON.stringify({ jobId: selectedJobId }),
-        headers: {}
-      });
-      await loadRuns();
-      const id = data.runId || "";
-      if (id) {
-        setSelectedRunId(id);
-        const runData = await apiFetch(`/api/runs/${id}`, { method: "GET", headers: {} });
-        const run = runData.run;
-        const resultPayload =
-          run && run.result
-            ? { status: "ok", request: run.request, ...run.result }
-            : runData;
-        setResult(resultPayload);
-        setJsonText(JSON.stringify(resultPayload, null, 2));
-      }
-      setBadgeText("Done");
-      setBadgeVariant("ok");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Job run failed";
-      setJsonText(JSON.stringify({ error: message }, null, 2));
-      setBadgeText("Error");
-      setBadgeVariant(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [apiFetch, selectedJobId, loadRuns]);
-
-  const handleOpenRun = useCallback(
-    async (runId) => {
-      if (!runId) return;
-      setSelectedRunId(runId);
-      setLoading(true);
-      setBadgeText("Loading run…");
-      setBadgeVariant("running");
-      try {
-        const runData = await apiFetch(`/api/runs/${runId}`, { method: "GET", headers: {} });
-        const run = runData.run;
-        const payload =
-          run && run.result ? { status: "ok", request: run.request, ...run.result } : runData;
-        setResult(payload);
-        setJsonText(JSON.stringify(payload, null, 2));
-        setActiveTab("summary");
-        setActivePageIdx(0);
-        setBadgeText("Loaded");
-        setBadgeVariant("ok");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load run";
-        setJsonText(JSON.stringify({ error: message }, null, 2));
-        setBadgeText("Error");
-        setBadgeVariant(null);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [apiFetch]
+    []
   );
 
   const handleSubmit = useCallback(
@@ -416,7 +204,10 @@ export default function App() {
         setBadgeVariant(null);
         setJsonText(
           JSON.stringify(
-            { error: "Select at least one option under “What to extract”." },
+            {
+              error:
+                "Select at least one of Page text, Links, Images, or turn on Meta & Open Graph in Advanced options."
+            },
             null,
             2
           )
@@ -473,7 +264,7 @@ export default function App() {
               ...fromApi,
               error: aborted ? "Scrape cancelled" : message,
               hint:
-                "Run the API on port 5000 (`npm run dev` in the project root). Use the Vite dev app (`npm run client:dev`) so `/api` proxies correctly. If MongoDB is not set, add `SKIP_DB=1` to `.env` to start the API anyway."
+                "Run the API on port 5000 (`npm run dev` in the project root). Use the Vite dev app (`npm run client:dev`) so `/api` proxies correctly."
             },
             null,
             2
@@ -646,163 +437,6 @@ export default function App() {
           </p>
         </section>
 
-        <section className="panel" aria-labelledby="account-title">
-          <div className="panel-head">
-            <h2 id="account-title">Account (for paid users)</h2>
-            <p className="panel-sub">
-              Jobs, run history, and exports require MongoDB + auth. Your instant scrape still works without it.
-            </p>
-          </div>
-
-          {user ? (
-            <div className="account-row">
-              <div className="account-left">
-                <div className="account-who">
-                  <div className="summary-k">Signed in</div>
-                  <div className="summary-v">{user.email}</div>
-                </div>
-                <div className="account-actions">
-                  <button type="button" className="btn btn-ghost" onClick={loadJobs}>
-                    Refresh jobs
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={loadRuns}>
-                    Refresh runs
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={handleLogout}>
-                    Logout
-                  </button>
-                </div>
-              </div>
-
-              <div className="account-right">
-                <div className="account-split">
-                  <div className="mini">
-                    <div className="summary-k">Jobs</div>
-                    <div className="mini-box">
-                      <div className="mini-row">
-                        <select
-                          value={selectedJobId}
-                          onChange={(e) => setSelectedJobId(e.target.value)}
-                          aria-label="Select job"
-                        >
-                          <option value="">Select a job…</option>
-                          {jobs.map((j) => (
-                            <option key={j._id} value={j._id}>
-                              {j.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          disabled={loading || !selectedJobId}
-                          onClick={handleRunJob}
-                        >
-                          Run job
-                        </button>
-                      </div>
-
-                      <form className="mini-form" onSubmit={handleCreateJob}>
-                        <input
-                          type="text"
-                          placeholder="Job name (e.g. Esoft services)"
-                          value={jobName}
-                          onChange={(e) => setJobName(e.target.value)}
-                        />
-                        <button type="submit" className="btn btn-ghost" disabled={loading}>
-                          Save current form as job
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-
-                  <div className="mini">
-                    <div className="summary-k">Recent runs</div>
-                    <div className="mini-box">
-                      <select
-                        value={selectedRunId}
-                        onChange={(e) => handleOpenRun(e.target.value)}
-                        aria-label="Select run"
-                      >
-                        <option value="">Select a run…</option>
-                        {runs.map((r) => (
-                          <option key={r._id} value={r._id}>
-                            {new Date(r.createdAt).toLocaleString()} · {r.status} · {r.request?.url || ""}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="export-row">
-                        <a
-                          className={"export-link" + (selectedRunId ? "" : " export-link--disabled")}
-                          href={selectedRunId ? `${API_BASE}/api/export/runs/${selectedRunId}.json` : "#"}
-                          onClick={(e) => {
-                            if (!selectedRunId) e.preventDefault();
-                          }}
-                        >
-                          Download JSON
-                        </a>
-                        <a
-                          className={"export-link" + (selectedRunId ? "" : " export-link--disabled")}
-                          href={selectedRunId ? `${API_BASE}/api/export/runs/${selectedRunId}.links.csv` : "#"}
-                          onClick={(e) => {
-                            if (!selectedRunId) e.preventDefault();
-                          }}
-                        >
-                          Links CSV
-                        </a>
-                        <a
-                          className={"export-link" + (selectedRunId ? "" : " export-link--disabled")}
-                          href={selectedRunId ? `${API_BASE}/api/export/runs/${selectedRunId}.images.csv` : "#"}
-                          onClick={(e) => {
-                            if (!selectedRunId) e.preventDefault();
-                          }}
-                        >
-                          Images CSV
-                        </a>
-                      </div>
-                      <div className="muted" style={{ fontSize: "0.85rem" }}>
-                        Exports require auth + DB.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <form className="login-form" onSubmit={handleLogin}>
-              <div className="login-grid">
-                <label className="field">
-                  <span className="field-label">Email</span>
-                  <input
-                    type="email"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="you@company.com"
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">Password</span>
-                  <input
-                    type="password"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    placeholder="••••••••"
-                  />
-                </label>
-              </div>
-              <div className="actions">
-                <button type="submit" className="btn btn-primary" disabled={loading}>
-                  Login
-                  <span className="btn-shine" aria-hidden="true" />
-                </button>
-                <div className="muted" style={{ fontSize: "0.9rem" }}>
-                  Note: auth requires MongoDB (disable <code>SKIP_DB=1</code> and set <code>MONGODB_URI</code> later).
-                </div>
-              </div>
-            </form>
-          )}
-        </section>
-
         <section id="scrape" className="panel" aria-labelledby="scrape-title">
           <div className="panel-head">
             <h2 id="scrape-title">New scrape</h2>
@@ -823,7 +457,7 @@ export default function App() {
                   type="text"
                   name="url"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => setUrl(sanitizeUrlInput(e.target.value))}
                   placeholder="example.com/products/summer-sale"
                   autoComplete="url"
                   spellCheck={false}
@@ -862,10 +496,26 @@ export default function App() {
                   <label className="chip">
                     <input
                       type="checkbox"
-                      checked={extract.meta}
-                      onChange={() => toggleExtract("meta")}
+                      checked={features.emails}
+                      onChange={() => toggleFeature("emails")}
                     />
-                    <span>Meta &amp; Open Graph</span>
+                    <span>Emails</span>
+                  </label>
+                  <label className="chip">
+                    <input
+                      type="checkbox"
+                      checked={features.phones}
+                      onChange={() => toggleFeature("phones")}
+                    />
+                    <span>Phones</span>
+                  </label>
+                  <label className="chip">
+                    <input
+                      type="checkbox"
+                      checked={features.documents}
+                      onChange={() => toggleFeature("documents")}
+                    />
+                    <span>Documents</span>
                   </label>
                 </div>
               </fieldset>
@@ -1031,18 +681,10 @@ export default function App() {
                     <label className="chip">
                       <input
                         type="checkbox"
-                        checked={features.emails}
-                        onChange={() => toggleFeature("emails")}
+                        checked={extract.meta}
+                        onChange={() => toggleExtract("meta")}
                       />
-                      <span>Emails</span>
-                    </label>
-                    <label className="chip">
-                      <input
-                        type="checkbox"
-                        checked={features.phones}
-                        onChange={() => toggleFeature("phones")}
-                      />
-                      <span>Phones</span>
+                      <span>Meta &amp; Open Graph</span>
                     </label>
                     <label className="chip">
                       <input
@@ -1076,14 +718,6 @@ export default function App() {
                       />
                       <span>BG images</span>
                     </label>
-                        <label className="chip">
-                          <input
-                            type="checkbox"
-                            checked={features.documents}
-                            onChange={() => toggleFeature("documents")}
-                          />
-                          <span>Documents</span>
-                        </label>
                   </div>
                 </div>
               </div>
@@ -1553,11 +1187,7 @@ export default function App() {
       </main>
 
       <footer className="site-footer">
-        <span>© WebHarvest</span>
-        <span className="sep">·</span>
-        <span>
-          Run API + Vite together, or set <code>VITE_API_URL</code> for production.
-        </span>
+        <span>© WebHarvest ·</span>
       </footer>
     </>
   );
